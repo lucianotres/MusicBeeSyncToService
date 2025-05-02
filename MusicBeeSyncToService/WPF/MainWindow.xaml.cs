@@ -9,6 +9,8 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Media;
+using static MusicBeePlugin.Plugin;
 
 namespace MBSyncToServiceUI
 {
@@ -30,6 +32,16 @@ namespace MBSyncToServiceUI
         {
             InitializeComponent();
 
+            int backColor = apiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputPanel, ElementState.ElementStateDefault, ElementComponent.ComponentBackground);
+            int foreColor = apiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputPanel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground);
+            int backCtrlColor = apiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputControl , ElementState.ElementStateDefault, ElementComponent.ComponentBackground);
+            int foreCtrlColor = apiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputControl, ElementState.ElementStateDefault, ElementComponent.ComponentForeground);
+
+            Resources["backColor"] = new SolidColorBrush(IntToColor(backColor));
+            Resources["foreColor"] = new SolidColorBrush(IntToColor(foreColor));
+            Resources["backCtrlColor"] = new SolidColorBrush(IntToColor(backCtrlColor));
+            Resources["foreCtrlColor"] = new SolidColorBrush(IntToColor(foreCtrlColor));
+
             MusicBeePlaylists = new ObservableCollection<CheckedListItem<MusicBeePlaylist>>();
             SpotifyPlaylists = new ObservableCollection<CheckedListItem<SpotifyPlaylist>>();
 
@@ -38,6 +50,12 @@ namespace MBSyncToServiceUI
 
             Action<string> log = (s) => Dispatcher.Invoke(() => { Log(s); });
             Spotify = new SpotifySyncHelper(log);
+        }
+
+        private static Color IntToColor(int color)
+        {
+            var drawingColor = System.Drawing.Color.FromArgb(color);
+            return Color.FromArgb(drawingColor.A, drawingColor.R, drawingColor.G, drawingColor.B);
         }
 
 
