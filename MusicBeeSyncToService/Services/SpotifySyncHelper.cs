@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Documents;
+using static Swan.Terminal;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
 
 namespace MusicBeePlugin.Services
@@ -91,130 +92,18 @@ namespace MusicBeePlugin.Services
             return Playlists;
         }
 
-        public async Task<List<IPlaylistSyncError>> SyncToSpotify(MusicBeeSyncHelper mb, List<MusicBeePlaylist> mbPlaylistsToSync,
+        public async Task SyncToSpotify(List<MusicBeePlaylist> mbPlaylistsToSync,
             SyncToSpotifySettings settings)
         {
-            List<IPlaylistSyncError> errors = new List<IPlaylistSyncError>();
+            PopulateErrors.Clear();
 
             foreach (MusicBeePlaylist playlist in mbPlaylistsToSync)
             {
-                // Use LINQ to check for a playlist with the same name
-                // If there is one, clear it's contents, otherwise create one
-                // Unless it's been deleted, in which case pretend it doesn't exist.
-                // I'm not sure how to undelete a playlist, or even if you can
-                string spotifyPlaylistName = null;
-                if (settings.IncludeFoldersInPlaylistName)
-                {
-                    spotifyPlaylistName = playlist.Name;
-                }
-                else
-                {
-                    spotifyPlaylistName = playlist.Name.Split('\\').Last();
-                }
+                PopulateMusicBeePlaylist = playlist;
+                await PopulateSpotifyPlaylistSongsFromMbPlaylist(false);
 
-                if (settings.IncludeZAtStartOfDatePlaylistName)
-                {
-                    // if it starts with a 2, it's a date playlist
-                    if (spotifyPlaylistName.StartsWith("2"))
-                    {
-                        spotifyPlaylistName = $"Z {spotifyPlaylistName}";
-                    }
-                }
-
-                // If Spotify playlist with same name already exists, clear it.
-                // Otherwise create one
-                SimplePlaylist thisPlaylist = Playlists.FirstOrDefault(p => p.Name == spotifyPlaylistName);
-                string thisPlaylistId;
-                if (thisPlaylist != null)
-                {
-                    var request = new PlaylistReplaceItemsRequest(new List<string>() { });
-                    var success = await Spotify.Playlists.ReplaceItems(thisPlaylist.Id, request);
-                    if (!success)
-                    {
-                        Log("Error while trying to clear playlist before syncing new tracks");
-                        return errors;
-                    }
-                    thisPlaylistId = thisPlaylist.Id;
-                }
-                else
-                {
-                    var request = new PlaylistCreateRequest(spotifyPlaylistName);
-                    FullPlaylist newPlaylist = await Spotify.Playlists.Create(Profile.Id, request);
-                    thisPlaylistId = newPlaylist.Id;
-                }
-
-
-                List<FullTrack> songsToAdd = new List<FullTrack>();
-                // And get the title and artist of each file, and add it to the Spotify playlist
-                foreach (var song in playlist.Songs)
-                {
-                    string title = song.Title;
-                    string artist = song.Artist;
-                    string album = song.Album;
-
-                    string artistEsc = EscapeChar(artist.ToLower());
-                    string titleEsc = EscapeChar(title.ToLower());
-                    string searchStr = $"artist:{artistEsc} track:{titleEsc}";
-                    var request = new SearchRequest(SearchRequest.Types.Track, searchStr);
-                    SearchResponse search = await Spotify.Search.Item(request);
-
-                    if (search.Tracks == null || search.Tracks.Items == null)
-                    {
-                        Log($"Could not find track on Spotify '{searchStr}' for '{title}' by '{artist}'");
-                        continue;
-                    }
-
-                    if (search.Tracks.Items.Count == 0)
-                    {
-                        Log($"Found 0 results on Spotify for: {searchStr} for '{title}' by '{artist}'");
-                        continue;
-                    }
-
-                    // try to find track matching artist and title
-                    FullTrack trackToAdd = null;
-                    foreach (FullTrack track in search.Tracks.Items)
-                    {
-                        // Titles, artists, and albums could not be exact matches
-                        bool titleMatches = FlexibleStringMatch(track.Name, title);
-                        bool artistMatches = (track.Artists.Exists(a => FlexibleStringMatch(a.Name, artist)));
-                        bool albumMatches = FlexibleStringMatch(track.Album.Name, album);
-                        if (titleMatches && artistMatches && albumMatches)
-                        {
-                            trackToAdd = track;
-                            break;
-                        }
-                    }
-
-                    if (trackToAdd == null)
-                    {
-                        trackToAdd = search.Tracks.Items.FirstOrDefault();
-                        Log($"Didn't find a perfect match for {searchStr} for '{title}' by '{artist}', so using '{trackToAdd.Name}' by '{trackToAdd.Artists.FirstOrDefault().Name}' instead");
-                    }
-
-                    songsToAdd.Add(trackToAdd);
-                }
-
-                List<string> uris = songsToAdd.ConvertAll(x => x.Uri);
-                while (uris.Count > 0)
-                {
-                    List<string> currUris = uris.Take(75).ToList();
-                    if (currUris.Count == 0)
-                    {
-                        break;
-                    }
-
-                    uris.RemoveRange(0, currUris.Count);
-                    var request = new PlaylistAddItemsRequest(currUris);
-                    var resp = await Spotify.Playlists.AddItems(thisPlaylistId, request);
-                    if (resp == null)
-                    {
-                        Log("Error while trying to update playlist with track uris");
-                        return errors;
-                    }
-                }
+                await SaveSpotifyPlaylistPopulatedFromMbPlaylist(settings);
             }
-
-            return errors;
         }
 
         public async Task SyncToMusicBee(List<SimplePlaylist> playlists)
@@ -272,7 +161,9 @@ namespace MusicBeePlugin.Services
 
         public List<IPlaylistSyncError> PopulateErrors { get; private set; } = new List<IPlaylistSyncError>();
         public List<MusicBeeSong> PopulateMusicBeeSongs { get; private set; } = new List<MusicBeeSong>();
-        public SimplePlaylist PopulateSpotifyPlaylist { get; set; } = null;        
+        public List<FullTrack> PopulateSpotifySongs { get; private set; } = new List<FullTrack>();
+        public SimplePlaylist PopulateSpotifyPlaylist { get; set; } = null;
+        public MusicBeePlaylist PopulateMusicBeePlaylist { get; set; } = null;
 
         public async Task PopulateMbPlaylistSongsFromSpotifyPlaylist(bool clearErrors = true)
         {
@@ -350,6 +241,141 @@ namespace MusicBeePlugin.Services
 
                 musicBeeSyncHelper.MbApiInterface.Playlist_CreatePlaylist(playlistRelativeDir, playlistName, mbPlaylistSongFiles);
             });
+
+        public async Task PopulateSpotifyPlaylistSongsFromMbPlaylist(bool clearErrors = true)
+        {
+            if (PopulateMusicBeePlaylist == null)
+            {
+                throw new ArgumentNullException(nameof(PopulateMusicBeePlaylist), "PopulateMusicBeePlaylist cannot be null");
+            }
+
+            if (clearErrors)
+            {
+                PopulateErrors.Clear();
+            }
+            
+            PopulateSpotifySongs.Clear();
+
+            foreach (var song in PopulateMusicBeePlaylist.Songs)
+            {
+                string title = song.Title;
+                string artist = song.Artist;
+                string album = song.Album;
+
+                string artistEsc = EscapeChar(artist.ToLower());
+                string titleEsc = EscapeChar(title.ToLower());
+                string searchStr = $"artist:{artistEsc} track:{titleEsc}";
+                var request = new SearchRequest(SearchRequest.Types.Track, searchStr);
+                SearchResponse search = await Spotify.Search.Item(request);
+
+                if (search.Tracks == null || search.Tracks.Items == null)
+                {
+                    Log($"Could not find track on Spotify '{searchStr}' for '{title}' by '{artist}'");
+                    continue;
+                }
+
+                if (search.Tracks.Items.Count == 0)
+                {
+                    Log($"Found 0 results on Spotify for: {searchStr} for '{title}' by '{artist}'");
+                    continue;
+                }
+
+                // try to find track matching artist and title
+                FullTrack trackToAdd = null;
+                foreach (FullTrack track in search.Tracks.Items)
+                {
+                    // Titles, artists, and albums could not be exact matches
+                    bool titleMatches = FlexibleStringMatch(track.Name, title);
+                    bool artistMatches = (track.Artists.Exists(a => FlexibleStringMatch(a.Name, artist)));
+                    bool albumMatches = FlexibleStringMatch(track.Album.Name, album);
+                    if (titleMatches && artistMatches && albumMatches)
+                    {
+                        trackToAdd = track;
+                        break;
+                    }
+                }
+
+                if (trackToAdd == null)
+                {
+                    trackToAdd = search.Tracks.Items.FirstOrDefault();
+                    Log($"Didn't find a perfect match for {searchStr} for '{title}' by '{artist}', so using '{trackToAdd.Name}' by '{trackToAdd.Artists.FirstOrDefault().Name}' instead");
+                }
+
+                PopulateSpotifySongs.Add(trackToAdd);
+            }
+        }
+
+        public async Task SaveSpotifyPlaylistPopulatedFromMbPlaylist(SyncToSpotifySettings settings)
+        {
+            if (PopulateMusicBeePlaylist == null)
+            {
+                throw new ArgumentNullException(nameof(PopulateMusicBeePlaylist), "PopulateMusicBeePlaylist cannot be null");
+            }
+
+            // Use LINQ to check for a playlist with the same name
+            // If there is one, clear it's contents, otherwise create one
+            // Unless it's been deleted, in which case pretend it doesn't exist.
+            // I'm not sure how to undelete a playlist, or even if you can
+            string spotifyPlaylistName = null;
+            if (settings.IncludeFoldersInPlaylistName)
+            {
+                spotifyPlaylistName = PopulateMusicBeePlaylist.Name;
+            }
+            else
+            {
+                spotifyPlaylistName = PopulateMusicBeePlaylist.Name.Split('\\').Last();
+            }
+
+            if (settings.IncludeZAtStartOfDatePlaylistName)
+            {
+                // if it starts with a 2, it's a date playlist
+                if (spotifyPlaylistName.StartsWith("2"))
+                {
+                    spotifyPlaylistName = $"Z {spotifyPlaylistName}";
+                }
+            }
+
+            // If Spotify playlist with same name already exists, clear it.
+            // Otherwise create one
+            SimplePlaylist thisPlaylist = Playlists.FirstOrDefault(p => p.Name == spotifyPlaylistName);
+            string thisPlaylistId;
+            if (thisPlaylist != null)
+            {
+                var request = new PlaylistReplaceItemsRequest(new List<string>() { });
+                var success = await Spotify.Playlists.ReplaceItems(thisPlaylist.Id, request);
+                if (!success)
+                {
+                    Log("Error while trying to clear playlist before syncing new tracks");
+                    return;
+                }
+                thisPlaylistId = thisPlaylist.Id;
+            }
+            else
+            {
+                var request = new PlaylistCreateRequest(spotifyPlaylistName);
+                FullPlaylist newPlaylist = await Spotify.Playlists.Create(Profile.Id, request);
+                thisPlaylistId = newPlaylist.Id;
+            }
+
+            List<string> uris = PopulateSpotifySongs.ConvertAll(x => x.Uri).ToList();
+            while (uris.Count > 0)
+            {
+                List<string> currUris = uris.Take(75).ToList();
+                if (currUris.Count == 0)
+                {
+                    break;
+                }
+
+                uris.RemoveRange(0, currUris.Count);
+                var request = new PlaylistAddItemsRequest(currUris);
+                var resp = await Spotify.Playlists.AddItems(thisPlaylistId, request);
+                if (resp == null)
+                {
+                    Log("Error while trying to update playlist with track uris");
+                    return;
+                }
+            }
+        }
 
         private string EscapeChar(string input)
         {

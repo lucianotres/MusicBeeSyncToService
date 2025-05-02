@@ -137,7 +137,8 @@ namespace MBSyncToServiceUI
                         IncludeZAtStartOfDatePlaylistName = IncludeZ,
                     };
 
-                    errors = await Spotify.SyncToSpotify(MusicBee, mbPlaylistsToSync, settings);
+                    await Spotify.SyncToSpotify(mbPlaylistsToSync, settings);
+                    errors = Spotify.PopulateErrors;
                     await RefreshSpotifyPlaylists();
                 }
                 else
