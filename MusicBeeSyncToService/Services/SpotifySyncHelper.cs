@@ -7,6 +7,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Documents;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
 
 namespace MusicBeePlugin.Services
 {
@@ -16,12 +18,19 @@ namespace MusicBeePlugin.Services
         private SpotifyClient Spotify;
         private Action<string> Log;
         private EmbedIOAuthServer Server;
+        private MusicBeeSyncHelper musicBeeSyncHelper;
 
         public List<SimplePlaylist> Playlists { get; set; } = new List<SimplePlaylist>();
 
-        public SpotifySyncHelper(Action<string> log)
+        public SpotifySyncHelper(Action<string> log, MusicBeeSyncHelper mb)
         {
+            if (mb == null)
+            {
+                throw new ArgumentNullException(nameof(mb), "MusicBeeSyncHelper cannot be null");
+            }
+
             Log = log;
+            musicBeeSyncHelper = mb;
         }
 
         public async Task<bool> LoginAsync()
@@ -208,80 +217,123 @@ namespace MusicBeePlugin.Services
             return errors;
         }
 
-        public async Task<List<IPlaylistSyncError>> SyncToMusicBee(MusicBeeSyncHelper mb, List<SimplePlaylist> playlists)
+        public async Task SyncToMusicBee(List<SimplePlaylist> playlists)
         {
-            List<IPlaylistSyncError> errors = new List<IPlaylistSyncError>();
+            PopulateErrors.Clear();
 
             // Go through each playlist we want to sync in turn
             foreach (SimplePlaylist playlist in playlists)
             {
-                // Create an empty list for this playlist's local songs
-                List<MusicBeeSong> mbPlaylistSongs = new List<MusicBeeSong>();
+                PopulateSpotifyPlaylist = playlist;
+                await PopulateMbPlaylistSongsFromSpotifyPlaylist(false);
 
-                // Get all tracks for playlist
-                var fp = await Spotify.Playlists.Get(playlist.Id);
-                var allTracks = await Spotify.PaginateAll(fp.Tracks);
-                var tracks = new List<FullTrack>();
-                foreach (var t in allTracks)
+                await SaveMbPlaylistPopulatedFromSpotifyPlaylist();
+            }
+
+            // Get the local playlists again
+            musicBeeSyncHelper.RefreshMusicBeePlaylists();
+        }
+
+        private async Task<List<FullTrack>> GetFullTracksFromSpotifyPlaylist(SimplePlaylist playlist)
+        {
+            var tracks = new List<FullTrack>();
+
+            // Get all tracks for playlist
+            var fp = await Spotify.Playlists.Get(playlist.Id);
+            var allTracks = await Spotify.PaginateAll(fp.Tracks);
+            
+            foreach (var t in allTracks)
+            {
+                if (t.Track is FullTrack track)
                 {
-                    if (t.Track is FullTrack track)
-                    {
-                        tracks.Add(track);
-                    }
+                    tracks.Add(track);
                 }
+            }
 
-                foreach (FullTrack track in tracks)
+            return tracks;
+        }
+
+        private MusicBeeSong FindMusicBeeSongFromSpotifyTrack(FullTrack track)
+        {
+            foreach (MusicBeeSong mbSong in musicBeeSyncHelper.Songs)
+            {
+                // Titles, artists, and albums could not be exact matches
+                bool titleMatches = FlexibleStringMatch(track.Name, mbSong.Title);
+                bool artistMatches = (track.Artists.Exists(a => FlexibleStringMatch(a.Name, mbSong.Artist)));
+                bool albumMatches = FlexibleStringMatch(track.Album.Name, mbSong.Album);
+                if (titleMatches && artistMatches && albumMatches)
                 {
-                    MusicBeeSong trackToAdd = null;
-                    foreach (MusicBeeSong mbSong in mb.Songs)
-                    {
-                        // Titles, artists, and albums could not be exact matches
-                        bool titleMatches = FlexibleStringMatch(track.Name, mbSong.Title);
-                        bool artistMatches = (track.Artists.Exists(a => FlexibleStringMatch(a.Name, mbSong.Artist)));
-                        bool albumMatches = FlexibleStringMatch(track.Album.Name, mbSong.Album);
-                        if (titleMatches && artistMatches && albumMatches)
-                        {
-                            trackToAdd = mbSong;
-                            break;
-                        }
-                    }
+                    return mbSong;
+                }
+            }
 
-                    if (trackToAdd != null)
+            return null;
+        }
+
+        public List<IPlaylistSyncError> PopulateErrors { get; private set; } = new List<IPlaylistSyncError>();
+        public List<MusicBeeSong> PopulateMusicBeeSongs { get; private set; } = new List<MusicBeeSong>();
+        public SimplePlaylist PopulateSpotifyPlaylist { get; set; } = null;        
+
+        public async Task PopulateMbPlaylistSongsFromSpotifyPlaylist(bool clearErrors = true)
+        {
+            if (PopulateSpotifyPlaylist == null)
+            {
+                throw new ArgumentNullException(nameof(PopulateSpotifyPlaylist), "PopulateSpotifyPlaylist cannot be null");
+            }
+
+            if (clearErrors)
+            {
+                PopulateErrors.Clear();
+            }
+
+            PopulateMusicBeeSongs.Clear();
+
+            // Get all tracks for playlist
+            var tracks = await GetFullTracksFromSpotifyPlaylist(PopulateSpotifyPlaylist);
+
+            foreach (FullTrack track in tracks)
+            {
+                var trackToAdd = FindMusicBeeSongFromSpotifyTrack(track);
+
+                if (trackToAdd != null)
+                {
+                    PopulateMusicBeeSongs.Add(trackToAdd);
+                }
+                else
+                {
+                    PopulateErrors.Add(new UnableToFindSpotifyTrackError()
                     {
-                        mbPlaylistSongs.Add(trackToAdd);
-                    }
-                    else
-                    {
-                        errors.Add(new UnableToFindSpotifyTrackError()
-                        {
-                            AlbumName = track.Album.Name,
-                            ArtistName = track.Artists.FirstOrDefault().Name,
-                            PlaylistName = playlist.Name,
-                            TrackName = track.Name,
-                            SearchedService = false
-                        });
-                    }
+                        AlbumName = track.Album.Name,
+                        ArtistName = track.Artists.FirstOrDefault().Name,
+                        PlaylistName = PopulateSpotifyPlaylist.Name,
+                        TrackName = track.Name,
+                        SearchedService = false
+                    });
+                }
+            }
+        }
+
+        public async Task SaveMbPlaylistPopulatedFromSpotifyPlaylist() =>
+            await Task.Run(() =>
+            {
+                if (PopulateSpotifyPlaylist == null)
+                {
+                    throw new ArgumentNullException(nameof(PopulateSpotifyPlaylist), "PopulateSpotifyPlaylist cannot be null");
                 }
 
                 //mbAPI expects a string array of song filenames to create a playlist
-                string[] mbPlaylistSongFiles = new string[mbPlaylistSongs.Count];
-                int i = 0;
-                foreach (MusicBeeSong song in mbPlaylistSongs)
-                {
-                    mbPlaylistSongFiles[i] = song.Filename;
-                    i++;
-                }
+                var mbPlaylistSongFiles = PopulateMusicBeeSongs.Select(s => s.Filename).ToArray();
 
                 // Now we need to delete any existing playlist with matching name
-                MusicBeePlaylist localPlaylist = mb.Playlists.FirstOrDefault(p => p.Name == playlist.Name);
+                MusicBeePlaylist localPlaylist = musicBeeSyncHelper.Playlists.FirstOrDefault(p => p.Name == PopulateSpotifyPlaylist.Name);
                 if (localPlaylist != null)
                 {
-                    mb.MbApiInterface.Playlist_DeletePlaylist(localPlaylist.mbName);
+                    musicBeeSyncHelper.MbApiInterface.Playlist_DeletePlaylist(localPlaylist.mbName);
                 }
 
                 // Create the playlist locally
                 string playlistRelativeDir = "";
-                string playlistName = playlist.Name;
+                string playlistName = PopulateSpotifyPlaylist.Name;
 
                 // if it's a date playlist, remove first Z
                 if (playlistName.StartsWith("Z "))
@@ -289,21 +341,15 @@ namespace MusicBeePlugin.Services
                     playlistName = playlistName.Skip(2).ToString();
                 }
 
-                string[] itemsInPath = playlist.Name.Split('\\');
+                string[] itemsInPath = PopulateSpotifyPlaylist.Name.Split('\\');
                 if (itemsInPath.Length > 1)
                 {
                     // Creates a playlist at top level directory
-                    mb.MbApiInterface.Playlist_CreatePlaylist("", playlistName, mbPlaylistSongFiles);
+                    musicBeeSyncHelper.MbApiInterface.Playlist_CreatePlaylist("", playlistName, mbPlaylistSongFiles);
                 }
 
-                mb.MbApiInterface.Playlist_CreatePlaylist(playlistRelativeDir, playlistName, mbPlaylistSongFiles);
-            }
-
-            // Get the local playlists again
-            mb.RefreshMusicBeePlaylists();
-
-            return errors;
-        }
+                musicBeeSyncHelper.MbApiInterface.Playlist_CreatePlaylist(playlistRelativeDir, playlistName, mbPlaylistSongFiles);
+            });
 
         private string EscapeChar(string input)
         {

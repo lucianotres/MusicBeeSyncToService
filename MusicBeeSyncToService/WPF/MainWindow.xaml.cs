@@ -49,7 +49,7 @@ namespace MBSyncToServiceUI
             RefreshMusicBeePlaylists();
 
             Action<string> log = (s) => Dispatcher.Invoke(() => { Log(s); });
-            Spotify = new SpotifySyncHelper(log);
+            Spotify = new SpotifySyncHelper(log, MusicBee);
         }
 
         private static Color IntToColor(int color)
@@ -143,7 +143,8 @@ namespace MBSyncToServiceUI
                 else
                 {
                     List<SimplePlaylist> spotifyPlaylistsToSync = GetSpotifyPlaylistsToSync();
-                    errors = await Spotify.SyncToMusicBee(MusicBee, spotifyPlaylistsToSync);
+                    await Spotify.SyncToMusicBee(spotifyPlaylistsToSync);
+                    errors = Spotify.PopulateErrors;
                     RefreshMusicBeePlaylists();
                 }
 
