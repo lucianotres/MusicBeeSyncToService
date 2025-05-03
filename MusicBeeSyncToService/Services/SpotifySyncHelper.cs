@@ -160,8 +160,7 @@ namespace MusicBeePlugin.Services
         }
 
         public List<IPlaylistSyncError> PopulateErrors { get; private set; } = new List<IPlaylistSyncError>();
-        public List<MusicBeeSong> PopulateMusicBeeSongs { get; private set; } = new List<MusicBeeSong>();
-        public List<FullTrack> PopulateSpotifySongs { get; private set; } = new List<FullTrack>();
+        public List<PopulatedSong> PopulatedSongs { get; private set; } = new List<PopulatedSong>();
         public SimplePlaylist PopulateSpotifyPlaylist { get; set; } = null;
         public MusicBeePlaylist PopulateMusicBeePlaylist { get; set; } = null;
 
@@ -177,27 +176,34 @@ namespace MusicBeePlugin.Services
                 PopulateErrors.Clear();
             }
 
-            PopulateMusicBeeSongs.Clear();
+            PopulatedSongs.Clear();
 
             // Get all tracks for playlist
             var tracks = await GetFullTracksFromSpotifyPlaylist(PopulateSpotifyPlaylist);
 
-            foreach (FullTrack track in tracks)
+            PopulatedSongs.AddRange(tracks.Select(t => new PopulatedSong()
             {
-                var trackToAdd = FindMusicBeeSongFromSpotifyTrack(track);
+                MbSong = null,
+                SpotifySong = t
+            }));
+
+            foreach (var song in PopulatedSongs)
+            {
+                var trackToAdd = FindMusicBeeSongFromSpotifyTrack(song.SpotifySong);
 
                 if (trackToAdd != null)
                 {
-                    PopulateMusicBeeSongs.Add(trackToAdd);
+                    song.MbSong = trackToAdd;
+                    song.Checked = true;
                 }
                 else
                 {
                     PopulateErrors.Add(new UnableToFindSpotifyTrackError()
                     {
-                        AlbumName = track.Album.Name,
-                        ArtistName = track.Artists.FirstOrDefault().Name,
+                        AlbumName = song.SpotifySong.Album.Name,
+                        ArtistName = song.SpotifySong.Artists.FirstOrDefault().Name,
                         PlaylistName = PopulateSpotifyPlaylist.Name,
-                        TrackName = track.Name,
+                        TrackName = song.SpotifySong.Name,
                         SearchedService = false
                     });
                 }
@@ -213,7 +219,10 @@ namespace MusicBeePlugin.Services
                 }
 
                 //mbAPI expects a string array of song filenames to create a playlist
-                var mbPlaylistSongFiles = PopulateMusicBeeSongs.Select(s => s.Filename).ToArray();
+                var mbPlaylistSongFiles = PopulatedSongs
+                    .Where(w => w.Checked && w.MbSong != null)
+                    .Select(s => s.MbSong.Filename)
+                    .ToArray();
 
                 // Now we need to delete any existing playlist with matching name
                 MusicBeePlaylist localPlaylist = musicBeeSyncHelper.Playlists.FirstOrDefault(p => p.Name == PopulateSpotifyPlaylist.Name);
@@ -254,13 +263,19 @@ namespace MusicBeePlugin.Services
                 PopulateErrors.Clear();
             }
             
-            PopulateSpotifySongs.Clear();
+            PopulatedSongs.Clear();
 
-            foreach (var song in PopulateMusicBeePlaylist.Songs)
+            PopulatedSongs.AddRange(PopulateMusicBeePlaylist.Songs.Select(s => new PopulatedSong()
             {
-                string title = song.Title;
-                string artist = song.Artist;
-                string album = song.Album;
+                MbSong = s,
+                SpotifySong = null
+            }));
+
+            foreach (var song in PopulatedSongs)
+            {
+                string title = song.MbSong.Title;
+                string artist = song.MbSong.Artist;
+                string album = song.MbSong.Album;
 
                 string artistEsc = EscapeChar(artist.ToLower());
                 string titleEsc = EscapeChar(title.ToLower());
@@ -301,7 +316,8 @@ namespace MusicBeePlugin.Services
                     Log($"Didn't find a perfect match for {searchStr} for '{title}' by '{artist}', so using '{trackToAdd.Name}' by '{trackToAdd.Artists.FirstOrDefault().Name}' instead");
                 }
 
-                PopulateSpotifySongs.Add(trackToAdd);
+                song.SpotifySong = trackToAdd;
+                song.Checked = true;
             }
         }
 
@@ -357,7 +373,11 @@ namespace MusicBeePlugin.Services
                 thisPlaylistId = newPlaylist.Id;
             }
 
-            List<string> uris = PopulateSpotifySongs.ConvertAll(x => x.Uri).ToList();
+            var uris = PopulatedSongs
+                .Where(w => w.Checked && w.SpotifySong != null)
+                .Select(s => s.SpotifySong.Uri)
+                .ToList();
+
             while (uris.Count > 0)
             {
                 List<string> currUris = uris.Take(75).ToList();

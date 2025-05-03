@@ -92,6 +92,7 @@
     <Compile Include="Models\PlaylistSyncError.cs" />
     <Compile Include="Models\MusicBeePlaylist.cs" />
     <Compile Include="Models\MusicBeeSong.cs" />
+    <Compile Include="Models\PopulatedSong.cs" />
     <Compile Include="Models\SpotifyPlaylist.cs" />
     <Compile Include="Models\SyncToSpotifySettings.cs" />
     <Compile Include="Services\MusicBeeSyncHelper.cs" />
