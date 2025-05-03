@@ -10,7 +10,11 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Forms.Integration;
 using System.Windows.Media;
+using System.Windows.Threading;
 using static MusicBeePlugin.Plugin;
 
 namespace MBSyncToServiceUI
@@ -29,9 +33,16 @@ namespace MBSyncToServiceUI
         public ObservableCollection<CheckedListItem<MusicBeePlaylist>> MusicBeePlaylists { get; set; }
         public ObservableCollection<CheckedListItem<SpotifyPlaylist>> SpotifyPlaylists { get; set; }
 
+        public ObservableCollection<MusicBeeSongSearch> LibrarySearchResults { get; set; }
+        public MusicBeeSongSearch LibrarySearchResultsSelected { get; set; }
+
+        public PopulatedSong PopulatedSongFromSpotifySelected { get; set; }
+
         public MainWindow(Plugin.MusicBeeApiInterface apiInterface)
         {
             InitializeComponent();
+
+            ElementHost.EnableModelessKeyboardInterop(this);
 
             int backColor = apiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputPanel, ElementState.ElementStateDefault, ElementComponent.ComponentBackground);
             int foreColor = apiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputPanel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground);
@@ -45,6 +56,10 @@ namespace MBSyncToServiceUI
 
             MusicBeePlaylists = new ObservableCollection<CheckedListItem<MusicBeePlaylist>>();
             SpotifyPlaylists = new ObservableCollection<CheckedListItem<SpotifyPlaylist>>();
+            LibrarySearchResults = new ObservableCollection<MusicBeeSongSearch>();
+
+            FindResultsFromLibrary.ItemsSource = LibrarySearchResults;
+            FindResultsFromLibrary.SetBinding(ListBox.SelectedItemProperty, new Binding("LibrarySearchResultsSelected") { Source = this, Mode = BindingMode.TwoWay });
 
             MusicBee = new MusicBeeSyncHelper(apiInterface);
             RefreshMusicBeePlaylists();
@@ -133,6 +148,9 @@ namespace MBSyncToServiceUI
         {
             FirstSectionPanel.Visibility = Visibility.Visible;
             SecondSectionPanelToMB.Visibility = Visibility.Hidden;
+            SecondSectionPanelToSpotify.Visibility = Visibility.Hidden;
+
+            MBSongConferenceListBox.ItemsSource = null;
         }
 
         private async void SpotifySyncButton_Click(object sender, RoutedEventArgs e)
@@ -149,7 +167,7 @@ namespace MBSyncToServiceUI
                 FirstSectionPanel.Visibility = Visibility.Hidden;
                 if (SyncToService)
                 {
-
+                    SecondSectionPanelToSpotify.Visibility = Visibility.Visible;
                 }
                 else
                 {
@@ -186,6 +204,7 @@ namespace MBSyncToServiceUI
                 await Spotify.PopulateMbPlaylistSongsFromSpotifyPlaylist();
 
                 MBSongConferenceListBox.ItemsSource = Spotify.PopulatedSongs;
+                MBSongConferenceListBox.SetBinding(ListBox.SelectedItemProperty, new Binding("PopulatedSongFromSpotifySelected") { Source = this, Mode = BindingMode.TwoWay });
 
                 if (Spotify.PopulateErrors.Count > 0)
                 {
@@ -328,7 +347,128 @@ namespace MBSyncToServiceUI
                 item.IsChecked = isChecked;
             }
         }
-        #endregion
+        #endregion      
 
+
+        private void ChangePopuplatedSongFromSpotifyLibraryRelated(MusicBeeSongSearch changeTo)
+        {
+            if (PopulatedSongFromSpotifySelected != null)
+            {
+                PopulatedSongFromSpotifySelected.MbSong = changeTo.Song;
+                PopulatedSongFromSpotifySelected.Checked = true;
+
+                MBSongConferenceListBox.Items.Refresh();
+            }    
+        }
+
+        private void SearchOnLibrary(string text)
+        {
+            LibrarySearchResults.Clear();
+
+            try
+            {
+                text = text.Trim();
+                if (text.Length <= 2)
+                    return;
+
+                var words  = text
+                    .Split(' ')
+                    .Select(s=> s.ToLower())
+                    .ToArray();
+
+                var results = MusicBee.FindSongsByWords(words);
+
+                foreach (var result in results)
+                    LibrarySearchResults.Add(result);
+            }
+            catch 
+            {
+                Log("Something goes wrong at search.");
+            }
+            finally
+            {
+                FindResultsFromLibrary.Visibility = LibrarySearchResults.Any() ? Visibility.Visible : Visibility.Hidden;
+            }
+        }
+        private void ClearFindResultsFromLibrary()
+        {
+            FindResultsFromLibrary.Visibility = Visibility.Hidden;
+            LibrarySearchResultsSelected = null;
+            LibrarySearchResults.Clear();
+        }
+
+        private DispatcherTimer searchLibraryDelayTimer = null;
+
+        private void LibrarySearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            if (searchLibraryDelayTimer == null)
+            {
+                searchLibraryDelayTimer = new DispatcherTimer();
+                searchLibraryDelayTimer.Interval = TimeSpan.FromMilliseconds(300);
+                searchLibraryDelayTimer.Tick += new EventHandler((s, ee) =>
+                {
+                    searchLibraryDelayTimer.Stop();
+                    SearchOnLibrary(LibrarySearchBox.Text);
+                });
+            }
+
+            searchLibraryDelayTimer.Stop();
+            searchLibraryDelayTimer.Start();
+        }
+
+        private void LibrarySearchBox_PreviewKeyUp(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+
+                if (LibrarySearchResults.Any())
+                {
+                    var changeTo = LibrarySearchResults.First();
+                    ChangePopuplatedSongFromSpotifyLibraryRelated(changeTo);
+                }
+
+                ClearFindResultsFromLibrary();
+            }
+            else if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                e.Handled = true;
+                ClearFindResultsFromLibrary();
+                LibrarySearchBox.Text = "";
+            }
+            else if (e.Key == System.Windows.Input.Key.Down)
+            {
+                e.Handled = true;
+                if (FindResultsFromLibrary.IsVisible)
+                {
+                    if (LibrarySearchResults.Count > 1)
+                    {
+                        FindResultsFromLibrary.SelectedIndex = 1;
+                        FindResultsFromLibrary.UpdateLayout();
+                        FindResultsFromLibrary.Focus();
+                    }
+                    else
+                        FindResultsFromLibrary.Focus();
+                }
+            }
+        }
+
+        private void FindResultsFromLibrary_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                e.Handled = true;
+                ClearFindResultsFromLibrary();
+            }
+            else if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+                
+                if (LibrarySearchResultsSelected != null)
+                    ChangePopuplatedSongFromSpotifyLibraryRelated(LibrarySearchResultsSelected);
+
+                ClearFindResultsFromLibrary();
+            }
+        }
     }
 }

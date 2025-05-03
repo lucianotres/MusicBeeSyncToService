@@ -53,7 +53,7 @@
         <Label Content="Logging" Margin="10,4,0,2" Padding="0"/>
         <TextBox x:Name="OutputTextBox" Grid.Row="1" Margin="10,0,10,10" TextWrapping="Wrap" IsReadOnly="True"/>
 
-        <Grid x:Name="FirstSectionPanel" Visibility="Hidden" Grid.Row="2">
+        <Grid x:Name="FirstSectionPanel" Visibility="Visible" Grid.Row="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -100,13 +100,18 @@
             </Grid>
         </Grid>
 
-        <Grid x:Name="SecondSectionPanelToMB" Visibility="Visible" Grid.Row="2" Margin="10,0,10,10">
+        <Grid x:Name="SecondSectionPanelToMB" Visibility="Hidden" Grid.Row="2" Margin="10,0,10,10">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <Grid HorizontalAlignment="Stretch" Margin="7,0,24,0">
+            <StackPanel Grid.Row="0" Orientation="Horizontal">
+                <Label Padding="4,2" VerticalAlignment="Center" Content="Search song: " />
+                <TextBox x:Name="LibrarySearchBox" MinWidth="200" VerticalAlignment="Center" Padding="2" TextChanged="LibrarySearchBox_TextChanged" PreviewKeyUp="LibrarySearchBox_PreviewKeyUp"/>
+            </StackPanel>
+            <Grid Grid.Row="1" HorizontalAlignment="Stretch" Margin="7,0,24,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="20"/>
                     <ColumnDefinition Width="1*"/>
@@ -115,7 +120,7 @@
                 <Label Grid.Column="1" Padding="0" VerticalAlignment="Center" Margin="0,0,5,0" Content="MusicBee Library"/>
                 <Label Grid.Column="2" Padding="0" VerticalAlignment="Center" Margin="0,0,5,0" Content="Spotify Library"/>
             </Grid>
-            <ListBox x:Name="MBSongConferenceListBox" Grid.Row="1" HorizontalContentAlignment="Stretch" 
+            <ListBox x:Name="MBSongConferenceListBox" Grid.Row="2" HorizontalContentAlignment="Stretch" 
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" 
                      ScrollViewer.VerticalScrollBarVisibility="Visible"
                      ItemsSource="{x:Static model:PopulatedSongsForDesign.Songs}">
@@ -134,10 +139,27 @@
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
-            <StackPanel Grid.Row="2" Margin="0,6,0,0" HorizontalAlignment="Center" Orientation="Horizontal">
+            <StackPanel Grid.Row="3" Margin="0,6,0,0" HorizontalAlignment="Center" Orientation="Horizontal">
                 <Button Padding="16, 4" Content="Back to playlist selection" Click="ButtonBackToPlaylistSelect_Click" />
                 <Button Padding="16, 4" Margin="10,0,0,0" Content="Continue to sync" Click="ButtonContinueToSinc_Click" />
             </StackPanel>
+            <ListBox x:Name="FindResultsFromLibrary" Visibility="Hidden" Grid.Row="0" Grid.RowSpan="4" 
+                     HorizontalAlignment="Left" 
+                     VerticalAlignment="Top" 
+                     Margin="80,28,0,0"
+                     PreviewKeyDown="FindResultsFromLibrary_PreviewKeyDown">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Label Content="{Binding Song}" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+
+        <Grid x:Name="SecondSectionPanelToSpotify" Visibility="Hidden" Grid.Row="2" Margin="10,0,10,10">
+            <Label Content="Not implemented yet" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            <Button Padding="16, 4" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,50,0,0"
+                    Content="Back to playlist selection" Click="ButtonBackToPlaylistSelect_Click" />
         </Grid>
     </Grid>
 </Window>

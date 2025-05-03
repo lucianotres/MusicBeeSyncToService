@@ -112,5 +112,48 @@ namespace MusicBeePlugin.Services
             return allMbSongs;
         }
 
+
+        public IEnumerable<MusicBeeSongSearch> FindSongsByWords(params string[] words)
+        {
+            int wordsCount = words.Length;
+
+            if (words == null || wordsCount == 0)
+                return new List<MusicBeeSongSearch>(0);
+
+            return Songs
+                .Select(s =>
+                {
+                    int score = 0;
+                    var title = s.Title.ToLower();
+                    var artist = s.Artist.ToLower();
+                    var album = s.Album.ToLower();
+
+                    foreach (var word in words)
+                    {
+                        if (title.Contains(word))
+                        {
+                            score += 10;
+                        }
+                        if (artist.Contains(word))
+                        {
+                            score += 5;
+                        }
+                        if (album.Contains(word))
+                        {
+                            score += 1;
+                        }
+                    }
+
+                    return new MusicBeeSongSearch
+                    {
+                        Song = s,
+                        SearchScore = score
+                    };
+                })
+                .Where(s => s.SearchScore > wordsCount) //minimum score should match the number of words for album
+                .OrderByDescending(s => s.SearchScore)
+                .Take(10)
+                .ToList();
+        }
     }
 }
