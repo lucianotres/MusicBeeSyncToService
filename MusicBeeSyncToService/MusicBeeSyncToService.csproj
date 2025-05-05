@@ -103,6 +103,7 @@
     <Compile Include="MusicBeePlugin\MBGmusicPlugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="WPF\CheckedListItem.cs" />
+    <Compile Include="WPF\FullTrackStringConverter.cs" />
     <Compile Include="WPF\MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </Compile>

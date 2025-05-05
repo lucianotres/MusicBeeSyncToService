@@ -41,7 +41,7 @@ namespace MusicBeePlugin.Models
             {
                 if (SpotifySong == null)
                     return "";
-                return String.Join(", ", SpotifySong.Artists.Select(a => a.Name)) + " - " + SpotifySong.Name;
+                return String.Join("; ", SpotifySong.Artists.Select(a => a.Name)) + " - " + SpotifySong.Name;
             }
         }
     }

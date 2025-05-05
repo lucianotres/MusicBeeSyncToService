@@ -433,5 +433,20 @@ namespace MusicBeePlugin.Services
                 || x.Contains(y)
                 || y.Contains(x);
         }
+
+        public async Task<IEnumerable<FullTrack>> FindSongsInSpotifyDatabase(string artist, string title)
+        {
+            string artistEsc = EscapeChar(artist.ToLower());
+            string titleEsc = EscapeChar(title.ToLower());
+            string searchStr = $"artist:{artistEsc} track:{titleEsc}";
+            var request = new SearchRequest(SearchRequest.Types.Track, searchStr);
+            
+            SearchResponse search = await Spotify.Search.Item(request);
+
+            if (search.Tracks == null || search.Tracks.Items == null)
+                return new List<FullTrack>(0);
+
+            return search.Tracks.Items.ToList();
+        }
     }
 }

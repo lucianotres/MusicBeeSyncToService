@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
@@ -16,6 +17,8 @@ using System.Windows.Forms.Integration;
 using System.Windows.Media;
 using System.Windows.Threading;
 using static MusicBeePlugin.Plugin;
+using static System.Net.Mime.MediaTypeNames;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
 
 namespace MBSyncToServiceUI
 {
@@ -36,7 +39,10 @@ namespace MBSyncToServiceUI
         public ObservableCollection<MusicBeeSongSearch> LibrarySearchResults { get; set; }
         public MusicBeeSongSearch LibrarySearchResultsSelected { get; set; }
 
-        public PopulatedSong PopulatedSongFromSpotifySelected { get; set; }
+        public ObservableCollection<FullTrack> SpotifySongSearchResults { get; set; }
+        public FullTrack SpotifySongSearchResultsSelected { get; set; }
+
+        public PopulatedSong PopulatedSongSelected { get; set; }
 
         public MainWindow(Plugin.MusicBeeApiInterface apiInterface)
         {
@@ -57,9 +63,7 @@ namespace MBSyncToServiceUI
             MusicBeePlaylists = new ObservableCollection<CheckedListItem<MusicBeePlaylist>>();
             SpotifyPlaylists = new ObservableCollection<CheckedListItem<SpotifyPlaylist>>();
             LibrarySearchResults = new ObservableCollection<MusicBeeSongSearch>();
-
-            FindResultsFromLibrary.ItemsSource = LibrarySearchResults;
-            FindResultsFromLibrary.SetBinding(ListBox.SelectedItemProperty, new Binding("LibrarySearchResultsSelected") { Source = this, Mode = BindingMode.TwoWay });
+            SpotifySongSearchResults = new ObservableCollection<FullTrack>();
 
             MusicBee = new MusicBeeSyncHelper(apiInterface);
             RefreshMusicBeePlaylists();
@@ -67,6 +71,15 @@ namespace MBSyncToServiceUI
             Action<string> log = (s) => Dispatcher.Invoke(() => { Log(s); });
             Spotify = new SpotifySyncHelper(log, MusicBee);
 
+            SongConferenceListBox.ItemsSource = Spotify.PopulatedSongs;
+            SongConferenceListBox.SetBinding(ListBox.SelectedItemProperty, new Binding("PopulatedSongSelected") { Source = this, Mode = BindingMode.TwoWay });
+
+            FindResultsFromLibrary.ItemsSource = LibrarySearchResults;
+            FindResultsFromLibrary.SetBinding(ListBox.SelectedItemProperty, new Binding("LibrarySearchResultsSelected") { Source = this, Mode = BindingMode.TwoWay });
+
+            FindResultsFromSpotify.ItemsSource = SpotifySongSearchResults;
+            FindResultsFromSpotify.SetBinding(ListBox.SelectedItemProperty, new Binding("SpotifySongSearchResultsSelected") { Source = this, Mode = BindingMode.TwoWay });
+            
             ClearPanelsVisibility();
         }
 
@@ -139,18 +152,26 @@ namespace MBSyncToServiceUI
         {
             ClearPanelsVisibility();
         }
-        private void ButtonContinueToSinc_Click(object sender, RoutedEventArgs e)
+        private async void ButtonContinueToSinc_Click(object sender, RoutedEventArgs e)
         {
-            _ = SpotifyToMbSavePopulatedList();
+            if (SyncToService)
+            {
+                await MbToSpotifySavePopulatedList();
+            }
+            else
+            {
+                await SpotifyToMbSavePopulatedList();
+            }
+
+            ClearPanelsVisibility();
         }
 
         private void ClearPanelsVisibility()
         {
             FirstSectionPanel.Visibility = Visibility.Visible;
-            SecondSectionPanelToMB.Visibility = Visibility.Hidden;
-            SecondSectionPanelToSpotify.Visibility = Visibility.Hidden;
+            SecondSectionPanel.Visibility = Visibility.Hidden;
 
-            MBSongConferenceListBox.ItemsSource = null;
+            SongConferenceListBox.Items.Refresh();
         }
 
         private async void SpotifySyncButton_Click(object sender, RoutedEventArgs e)
@@ -159,43 +180,57 @@ namespace MBSyncToServiceUI
             Log($"Starting sync {direction} Spotify...");
             SpotifySelectAllButton.IsEnabled = false;
             SpotifySyncButton.IsEnabled = false;
+            BtnBackSelection.IsEnabled = false;
+            BtnContinueSync.IsEnabled = false;
+            SongSearchBox.IsEnabled = false;
 
-            int toSyncCount = (SyncToService ? GetMusicBeePlaylistsToSync().Count : GetSpotifyPlaylistsToSync().Count);
-
-            if (toSyncCount == 1)
+            try
             {
-                FirstSectionPanel.Visibility = Visibility.Hidden;
-                if (SyncToService)
+                int toSyncCount = (SyncToService ? GetMusicBeePlaylistsToSync().Count : GetSpotifyPlaylistsToSync().Count);
+
+                if (toSyncCount == 1)
                 {
-                    SecondSectionPanelToSpotify.Visibility = Visibility.Visible;
+                    FirstSectionPanel.Visibility = Visibility.Hidden;
+                    SecondSectionPanel.Visibility = Visibility.Visible;
+                    ServiceTypeLabel.Content = SyncToService ? "Sync MB playlist to Spotify" : "Sync Spotify playlist to MB";
+                    SpotifySearchHint.Visibility = SyncToService ? Visibility.Visible : Visibility.Hidden;
+                    SongConferenceListBox.Items.Refresh();
+
+                    if (SyncToService)
+                    {
+                        await MbToSpotifyPopulateSongsOfSelectedPlaylist();
+                    }
+                    else
+                    {
+                        await SpotifyToMbPopulateSongsOfSelectedPlaylist();
+                    }
+                }
+                else if (toSyncCount > 1)
+                {
+                    if (MessageBox.Show($"Are you really sure that you want to sync {toSyncCount} playlists automatic?", Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+                    {
+                        await SpotifySyncMultiplePlaylists();
+                        Log($"Finished sync {direction} Spotify.");
+                    }
                 }
                 else
                 {
-                    SecondSectionPanelToMB.Visibility = Visibility.Visible;
-                    await SpotifyToMbPopulateSongsOfSelectedPlaylist();
-                    Log($"Finished to populate the list.");
+                    Log("Nothing done, select one playlist or more.");
                 }
-            }
-            else if(toSyncCount > 1)
-            {
-                if (MessageBox.Show($"Are you really sure that you want to sync {toSyncCount} playlists automatic?", Title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
-                {
-                    await SpotifySyncMultiplePlaylists();
-                    Log($"Finished sync {direction} Spotify.");
-                }
-            }
-            else
-            {
-                Log("Nothing done, select one playlist or more.");
-            }
 
-            SpotifySelectAllButton.IsEnabled = true;
-            SpotifySyncButton.IsEnabled = true;            
+            }
+            finally
+            {
+                SpotifySelectAllButton.IsEnabled = true;
+                SpotifySyncButton.IsEnabled = true;
+                BtnBackSelection.IsEnabled = true;
+                BtnContinueSync.IsEnabled = true;
+                SongSearchBox.IsEnabled = true;
+            }
         }
 
         private async Task SpotifyToMbPopulateSongsOfSelectedPlaylist()
         {
-            MBSongConferenceListBox.ItemsSource = null;
             try
             {
                 var spotifyPlaylistsToSync = GetSpotifyPlaylistsToSync().First();
@@ -203,8 +238,7 @@ namespace MBSyncToServiceUI
                 Spotify.PopulateSpotifyPlaylist = spotifyPlaylistsToSync;
                 await Spotify.PopulateMbPlaylistSongsFromSpotifyPlaylist();
 
-                MBSongConferenceListBox.ItemsSource = Spotify.PopulatedSongs;
-                MBSongConferenceListBox.SetBinding(ListBox.SelectedItemProperty, new Binding("PopulatedSongFromSpotifySelected") { Source = this, Mode = BindingMode.TwoWay });
+                SongConferenceListBox.Items.Refresh();
 
                 if (Spotify.PopulateErrors.Count > 0)
                 {
@@ -218,7 +252,7 @@ namespace MBSyncToServiceUI
                         });
 
                     Log(errors.ToString());
-                    Log("See errors above");
+                    Log("Populated songs from Spotify with errors above");
                 }
                 else
                 {
@@ -243,6 +277,67 @@ namespace MBSyncToServiceUI
 
                 await Spotify.SaveMbPlaylistPopulatedFromSpotifyPlaylist();
                 Log($"Successfully saved playlist from Spotify");
+            }
+            catch (Exception ex)
+            {
+                Log(ex.Message);
+            }
+        }
+
+        private async Task MbToSpotifySavePopulatedList()
+        {
+            try
+            {
+                if (Spotify.PopulatedSongs.Where(w => w.Checked).Count() == 0)
+                {
+                    MessageBox.Show("No songs selected to save", Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                SyncToSpotifySettings settings = new SyncToSpotifySettings()
+                {
+                    IncludeFoldersInPlaylistName = IncludeFolders,
+                    IncludeZAtStartOfDatePlaylistName = IncludeZ,
+                };
+
+                await Spotify.SaveSpotifyPlaylistPopulatedFromMbPlaylist(settings);
+                Log($"Successfully saved playlist to Spotify");
+            }
+            catch (Exception ex)
+            {
+                Log(ex.Message);
+            }
+        }
+
+        private async Task MbToSpotifyPopulateSongsOfSelectedPlaylist()
+        {
+            try
+            {
+                var MbPlaylistsToSync = GetMusicBeePlaylistsToSync().First();
+
+                Spotify.PopulateMusicBeePlaylist = MbPlaylistsToSync;
+                await Spotify.PopulateSpotifyPlaylistSongsFromMbPlaylist();
+
+                SongConferenceListBox.Items.Refresh();
+
+                if (Spotify.PopulateErrors.Count > 0)
+                {
+                    var errors = Spotify
+                        .PopulateErrors
+                        .Select(s => s.GetMessage())
+                        .Aggregate(new StringBuilder(), (sb, s) =>
+                        {
+                            sb.AppendLine(s);
+                            return sb;
+                        });
+
+                    Log(errors.ToString());
+                    Log("Populated songs from MusicBee playlist with errors above");
+                }
+                else
+                {
+                    Log($"Successfully populated songs from MusicBee playlist");
+                }
             }
             catch (Exception ex)
             {
@@ -350,15 +445,15 @@ namespace MBSyncToServiceUI
         #endregion      
 
 
-        private void ChangePopuplatedSongFromSpotifyLibraryRelated(MusicBeeSongSearch changeTo)
+        private void ChangePopuplatedSongWithMBLibraryRelated(MusicBeeSongSearch changeTo)
         {
-            if (PopulatedSongFromSpotifySelected != null)
+            if (PopulatedSongSelected != null)
             {
-                PopulatedSongFromSpotifySelected.MbSong = changeTo.Song;
-                PopulatedSongFromSpotifySelected.Checked = true;
+                PopulatedSongSelected.MbSong = changeTo.Song;
+                PopulatedSongSelected.Checked = true;
 
-                MBSongConferenceListBox.Items.Refresh();
-            }    
+                SongConferenceListBox.Items.Refresh();
+            }
         }
 
         private void SearchOnLibrary(string text)
@@ -380,6 +475,8 @@ namespace MBSyncToServiceUI
 
                 foreach (var result in results)
                     LibrarySearchResults.Add(result);
+
+                LibrarySearchResultsSelected = LibrarySearchResults.FirstOrDefault();
             }
             catch 
             {
@@ -390,16 +487,44 @@ namespace MBSyncToServiceUI
                 FindResultsFromLibrary.Visibility = LibrarySearchResults.Any() ? Visibility.Visible : Visibility.Hidden;
             }
         }
-        private void ClearFindResultsFromLibrary()
+        private void ClearSearchResults()
         {
-            FindResultsFromLibrary.Visibility = Visibility.Hidden;
-            LibrarySearchResultsSelected = null;
-            LibrarySearchResults.Clear();
+            if (SyncToService)
+            {
+                FindResultsFromSpotify.Visibility = Visibility.Hidden;
+                SpotifySongSearchResultsSelected = null;
+                SpotifySongSearchResults.Clear();
+            }
+            else
+            {
+                FindResultsFromLibrary.Visibility = Visibility.Hidden;
+                LibrarySearchResultsSelected = null;
+                LibrarySearchResults.Clear();
+            }
+        }
+        private void UseFirstSearchResult()
+        {
+            if (SyncToService)
+            {
+                if (SpotifySongSearchResults.Any())
+                {
+                    var changeTo = SpotifySongSearchResults.First();
+                    ChangePopuplatedSongWithSpotifySongRelated(changeTo);
+                }
+            }
+            else
+            {
+                if (LibrarySearchResults.Any())
+                {
+                    var changeTo = LibrarySearchResults.First();
+                    ChangePopuplatedSongWithMBLibraryRelated(changeTo);
+                }
+            }
         }
 
         private DispatcherTimer searchLibraryDelayTimer = null;
 
-        private void LibrarySearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        private void SongSearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
         {
             if (searchLibraryDelayTimer == null)
             {
@@ -408,7 +533,15 @@ namespace MBSyncToServiceUI
                 searchLibraryDelayTimer.Tick += new EventHandler((s, ee) =>
                 {
                     searchLibraryDelayTimer.Stop();
-                    SearchOnLibrary(LibrarySearchBox.Text);
+
+                    if (SyncToService)
+                    {
+                        _ = SearchOnSpotify(SongSearchBox.Text);
+                    }
+                    else
+                    {
+                        SearchOnLibrary(SongSearchBox.Text);
+                    }
                 });
             }
 
@@ -416,39 +549,52 @@ namespace MBSyncToServiceUI
             searchLibraryDelayTimer.Start();
         }
 
-        private void LibrarySearchBox_PreviewKeyUp(object sender, System.Windows.Input.KeyEventArgs e)
+        private void SongSearchBox_PreviewKeyUp(object sender, System.Windows.Input.KeyEventArgs e)
         {
             if (e.Key == System.Windows.Input.Key.Enter)
             {
                 e.Handled = true;
 
-                if (LibrarySearchResults.Any())
-                {
-                    var changeTo = LibrarySearchResults.First();
-                    ChangePopuplatedSongFromSpotifyLibraryRelated(changeTo);
-                }
-
-                ClearFindResultsFromLibrary();
+                UseFirstSearchResult();
+                ClearSearchResults();
             }
             else if (e.Key == System.Windows.Input.Key.Escape)
             {
                 e.Handled = true;
-                ClearFindResultsFromLibrary();
-                LibrarySearchBox.Text = "";
+                ClearSearchResults();
+                SongSearchBox.Text = "";
             }
             else if (e.Key == System.Windows.Input.Key.Down)
             {
                 e.Handled = true;
-                if (FindResultsFromLibrary.IsVisible)
+
+                if (SyncToService)
                 {
-                    if (LibrarySearchResults.Count > 1)
+                    if (FindResultsFromSpotify.IsVisible)
                     {
-                        FindResultsFromLibrary.SelectedIndex = 1;
-                        FindResultsFromLibrary.UpdateLayout();
-                        FindResultsFromLibrary.Focus();
+                        if (SpotifySongSearchResults.Count > 1)
+                        {
+                            FindResultsFromSpotify.SelectedIndex = 1;
+                            FindResultsFromSpotify.UpdateLayout();
+                            FindResultsFromSpotify.Focus();
+                        }
+                        else
+                            FindResultsFromSpotify.Focus();
                     }
-                    else
-                        FindResultsFromLibrary.Focus();
+                }
+                else
+                {
+                    if (FindResultsFromLibrary.IsVisible)
+                    {
+                        if (LibrarySearchResults.Count > 1)
+                        {
+                            FindResultsFromLibrary.SelectedIndex = 1;
+                            FindResultsFromLibrary.UpdateLayout();
+                            FindResultsFromLibrary.Focus();
+                        }
+                        else
+                            FindResultsFromLibrary.Focus();
+                    }
                 }
             }
         }
@@ -458,16 +604,93 @@ namespace MBSyncToServiceUI
             if (e.Key == System.Windows.Input.Key.Escape)
             {
                 e.Handled = true;
-                ClearFindResultsFromLibrary();
+                ClearSearchResults();
             }
             else if (e.Key == System.Windows.Input.Key.Enter)
             {
                 e.Handled = true;
                 
                 if (LibrarySearchResultsSelected != null)
-                    ChangePopuplatedSongFromSpotifyLibraryRelated(LibrarySearchResultsSelected);
+                    ChangePopuplatedSongWithMBLibraryRelated(LibrarySearchResultsSelected);
 
-                ClearFindResultsFromLibrary();
+                ClearSearchResults();
+            }
+        }
+
+        private void FindResultsFromLibrary_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (LibrarySearchResultsSelected != null)
+            {
+                ChangePopuplatedSongWithMBLibraryRelated(LibrarySearchResultsSelected);
+                ClearSearchResults();
+            }
+        }
+
+
+        private void ChangePopuplatedSongWithSpotifySongRelated(FullTrack changeTo)
+        {
+            if (PopulatedSongSelected != null)
+            {
+                PopulatedSongSelected.SpotifySong = changeTo;
+                PopulatedSongSelected.Checked = true;
+
+                SongConferenceListBox.Items.Refresh();
+            }
+        }
+
+        private async Task SearchOnSpotify(string text)
+        {
+            SpotifySongSearchResults.Clear();
+
+            try
+            {
+                text = text.Trim();
+                string[] query = text.Split(new[] { " - " }, StringSplitOptions.None);
+                
+                if (query.Length != 2)
+                    return;
+
+                var results = await Spotify.FindSongsInSpotifyDatabase(query[0], query[1]);
+
+                foreach (var result in results.Take(10))
+                    SpotifySongSearchResults.Add(result);
+
+                SpotifySongSearchResultsSelected = SpotifySongSearchResults.FirstOrDefault();
+            }
+            catch
+            {
+                Log("Something goes wrong at search.");
+            }
+            finally
+            {
+                FindResultsFromSpotify.Visibility = SpotifySongSearchResults.Any() ? Visibility.Visible : Visibility.Hidden;
+            }
+        }
+
+        private void FindResultsFromSpotify_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (SpotifySongSearchResultsSelected != null)
+            {
+                ChangePopuplatedSongWithSpotifySongRelated(SpotifySongSearchResultsSelected);
+                ClearSearchResults();
+            }
+        }
+
+        private void FindResultsFromSpotify_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                e.Handled = true;
+                ClearSearchResults();
+            }
+            else if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+
+                if (SpotifySongSearchResultsSelected != null)
+                    ChangePopuplatedSongWithSpotifySongRelated(SpotifySongSearchResultsSelected);
+
+                ClearSearchResults();
             }
         }
     }

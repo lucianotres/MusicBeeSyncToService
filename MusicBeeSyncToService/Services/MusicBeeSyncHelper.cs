@@ -150,7 +150,7 @@ namespace MusicBeePlugin.Services
                         SearchScore = score
                     };
                 })
-                .Where(s => s.SearchScore > wordsCount) //minimum score should match the number of words for album
+                .Where(s => s.SearchScore > (wordsCount * 5)) //minimum score should match the number of words for artist at least
                 .OrderByDescending(s => s.SearchScore)
                 .Take(10)
                 .ToList();
